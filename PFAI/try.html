@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<title>W3.CSS Template</title>
+<meta charset="UTF-8">
+
+<link rel="stylesheet" href="static/style.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Montserrat">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<style>
+body,h1,h2,h3,h4,h5,h6 {font-family: "Montserrat", sans-serif;}
+body, html {
+  height: 100%;
+letter-spacing:5px;
+  color: #ED786C;
+  line-height: 1.8;
+	background-color: black;
+}
+.w3-hover-opacity 
+	{
+	cursor: pointer;
+		color:red;
+	}
+#navDemo
+	{
+		color:#ED786C;
+	}
+td
+    {
+        font-size: 10px;
+        color:black;
+
+    }
+    th
+    {
+        width:300px;
+    }
+    table, th, td 
+    {
+        color:black;
+        font-weight: bold;
+        text-align: center;
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+th, td {
+  background-color: #ED786C;
+}
+</style>
+<body>
+<!-- Navbar (sit on top) -->
+<div class="w3-top">  
+	<div class="w3-bar" id="myNavbar">
+    <a class="w3-bar-item w3-button w3-hover-black w3-hide-medium w3-hide-large w3-right" href="javascript:void(0);" onclick="toggleFunction()" title="Toggle Navigation Menu">
+      <i class="fa fa-bars"></i>
+    </a>
+    <a href="{{ url_for('home') }}" class="w3-bar-item w3-button">HOME</a>
+    <a href="{{ url_for('home') }}" class="w3-bar-item w3-button w3-hide-small">ABOUT</a>
+  </div>
+
+  <!-- Navbar on small screens -->
+  <div id="navDemo" class="w3-bar-block w3-black w3-hide w3-hide-large w3-hide-medium">
+    <a href="{{ url_for('home') }}" class="w3-bar-item w3-button" onclick="toggleFunction()"><font color="#ED786C">ABOUT</font></a>
+    </div>
+</div>
+
+<!-- First Parallax Image with Logo Text -->
+<div class="bgimg-1 w3-display-container w3-opacity-min" id="home">
+  <div class="w3-display-middle" style="white-space:nowrap;position: relative;top:300px;">
+    <center>
+      
+    <table>
+        <tr>
+          <th>Model</th>
+          <th>Prediction</th>
+        </tr>
+        {% for j in name %}
+        {% for i in pre %}
+        
+        <tr>
+          <td>{{j}}</td>
+          <td>{{i}}</td>
+        </tr>
+          {% endfor %}
+          {% endfor %}
+      </table>
+    </center>
+  </div>
+ 
+ 
+  
+</div>
+</body>
+</html>

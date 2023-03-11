@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html>
+<title>Ruha Voice Recognition</title>
+<meta charset="UTF-8">
+
+<link rel="stylesheet" href="static/style.css">
+<script type="text/javascript" src="https://code.jquery.com/jquery.min.js"></script>
+<script >
+  /**
+ * Recorder.js
+ * 
+ * Copyright 2012-2016 Matt Diamond (https://github.com/mattdiamond)
+ * Licensed under MIT
+ */
+ (function (f) {
+    if (typeof exports === "object" && typeof module !== "undefined") {
+        module.exports = f()
+    } else if (typeof define === "function" && define.amd) {
+        define([], f)
+    } else {
+        var g;
+        if (typeof window !== "undefined") {
+            g = window
+        } else if (typeof global !== "undefined") {
+            g = global
+        } else if (typeof self !== "undefined") {
+            g = self
+        } else {
+            g = this
+        }
+        g.Recorder = f()
+    }
+})(function () {
+    var define, module, exports;
+    return (function e(t, n, r) {
+        function s(o, u) {
+            if (!n[o]) {
+                if (!t[o]) {
+                    var a = typeof require == "function" && require;
+                    if (!u && a)
+                        return a(o, !0);
+                    if (i)
+                        return i(o, !0);
+                    var f = new Error("Cannot find module '" + o + "'");
+                    throw f.code = "MODULE_NOT_FOUND", f
+                }
+                var l = n[o] = {
+                    exports: {}
+                };
+                t[o][0].call(l.exports, function (e) {
+                    var n = t[o][1][e];
+                    return s(n ? n : e)
+                }, l, l.exports, e, t, n, r)
+            }
+            return n[o].exports
+        }
+        var i = typeof require == "function" && require;
+        for (var o = 0; o < r.length; o++)
+            s(r[o]);
+        return s
+    })({
+        1: [function (require, module, exports) {
+                "use strict";
+
+                module.exports = require("./recorder").Recorder;
+
+            }, {
+                "./recorder": 2
+            }],
+        2: [function (require, module, exports) {
+                'use strict';
+
+                var _createClass = (function () {
+                    function defineProperties(target, props) {
+                        for (var i = 0; i < props.length; i++) {
+                            var descriptor = props[i];
+                            descriptor.enumerable = descriptor.enumerable || false;
+                            descriptor.configurable = true;
+                            if ("value" in descriptor)
+                                descriptor.writable = true;
+                            Object.defineProperty(target, descriptor.key, descriptor);
+                        }
+                    }
+                    return function (Constructor, protoProps, staticProps) {
+                        if (protoProps)
+                            defineProperties(Constructor.prototype, protoProps);
+                        if (staticProps)
+                            defineProperties(Constructor, staticProps);
+                        return Constructor;
+                    };
+                })();
+
+                Object.defineProperty(exports, "__esModule", {
+                    value: true
+                });
+                exports.Recorder = undefined;
+
+                var _inlineWorker = require('inline-worker');
+
+                var _inlineWorker2 = _interopRequireDefault(_inlineWorker);
+
+                function _interopRequireDefault(obj) {
+                    return obj && obj.__esModule ? obj : {
+                        default: obj
+                    };
+                }
+
+                function _classCallCheck(instance, Constructor) {
+                    if (!(instance instanceof Constructor)) {
+                        throw new TypeError("Cannot call a class as a function");
+                    }
+                }
+
+                var Recorder = exports.Recorder = (function () {
+                    function Recorder(source, cfg) {
+                        var _this = this;
+
+                        _classCallCheck(this, Recorder);
+
+                        this.config = {
+                            bufferLen: 4096,
+                            numChannels: 2,
+                            mimeType: 'audio/wav'
+                        };
+                        this.recording = false;
+                        this.callbacks = {
+                            getBuffer: [],
+                            exportWAV: []
+                        };
+
+                        Object.assign(this.config, cfg);
+                        this.context = source.context;
+                        this.node = (this.context.createScriptProcessor || this.context.createJavaScriptNode).call(this.context, this.config.bufferLen, this.config.numChannels, this.config.numChannels);
+
+                        this.node.onaudioprocess = function (e) {
+                            if (!_this.recording)
+                                return;
+
+                            var buffer = [];
+                            for (var channel = 0; channel < _this.config.numChannels; channel++) {
+                                buffer.push(e.inputBuffer.getChannelData(channel));
+                            }
+                            _this.worker.postMessage({
+                                command: 'record',
+                                buffer: buffer
+                            });
+                        };
+
+                        source.connect(this.node);
+                        this.node.connect(this.context.destination); //this should not be necessary
+
+                        var self = {};
+                        this.worker = new _inlineWorker2.default(function () {
+                            var recLength = 0,
+                                    recBuffers = [],
+                                    sampleRate = undefined,
+                                    numChannels = undefined;
+
+                            self.onmessage = function (e) {
+                                switch (e.data.command) {
+                                    case 'init':
+                                        init(e.data.config);
+                                        break;
+                                    case 'record':
+                                        record(e.data.buffer);
+                                        break;
+                                    case 'exportWAV':
+                                        exportWAV(e.data.type);
+                                        break;
+                                    case 'getBuffer':
+                                        getBuffer();
+                                        break;
+                                    case 'clear':
+                                        clear();
+                                        break;
+                                }
+                            };
+
+                            function init(config) {
+                                sampleRate = config.sampleRate;
+                                numChannels = config.numChannels;
+                                initBuffers();
+                            }
+
+                            function record(inputBuffer) {
+                                for (var channel = 0; channel < numChannels; channel++) {
+                                    recBuffers[channel].push(inputBuffer[channel]);
+                                }
+                                recLength += inputBuffer[0].length;
+                            }
+
+                            function exportWAV(type) {
+                                var buffers = [];
+                                for (var channel = 0; channel < numChannels; channel++) {
+                                    buffers.push(mergeBuffers(recBuffers[channel], recLength));
+                                }
+                                var interleaved = undefined;
+                                if (numChannels === 2) {
+                                    interleaved = interleave(buffers[0], buffers[1]);
+                                } else {
+                                    interleaved = buffers[0];
+                                }
+                                var dataview = encodeWAV(interleaved);
+                                var audioBlob = new Blob([dataview], {
+                                    type: type
+                                });
+
+                                self.postMessage({
+                                    command: 'exportWAV',
+                                    data: audioBlob
+                                });
+                            }
+
+                            function getBuffer() {
+                                var buffers = [];
+                                for (var channel = 0; channel < numChannels; channel++) {
+                                    buffers.push(mergeBuffers(recBuffers[channel], recLength));
+                                }
+                                self.postMessage({
+                                    command: 'getBuffer',
+                                    data: buffers
+                                });
+                            }
+
+                            function clear() {
+                                recLength = 0;
+                                recBuffers = [];
+                                initBuffers();
+                            }
+
+                            function initBuffers() {
+                                for (var channel = 0; channel < numChannels; channel++) {
+                                    recBuffers[channel] = [];
+                                }
+                            }
+
+                            function mergeBuffers(recBuffers, recLength) {
+                                var result = new Float32Array(recLength);
+                                var offset = 0;
+                                for (var i = 0; i < recBuffers.length; i++) {
+                                    result.set(recBuffers[i], offset);
+                                    offset += recBuffers[i].length;
+                                }
+                                return result;
+                            }
+
+                            function interleave(inputL, inputR) {
+                                var length = inputL.length + inputR.length;
+                                var result = new Float32Array(length);
+
+                                var index = 0,
+                                        inputIndex = 0;
+
+                                while (index < length) {
+                                    result[index++] = inputL[inputIndex];
+                                    result[index++] = inputR[inputIndex];
+                                    inputIndex++;
+                                }
+                                return result;
+                            }
+
+                            function floatTo16BitPCM(output, offset, input) {
+                                for (var i = 0; i < input.length; i++, offset += 2) {
+                                    var s = Math.max(-1, Math.min(1, input[i]));
+                                    output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                                }
+                            }
+
+                            function writeString(view, offset, string) {
+                                for (var i = 0; i < string.length; i++) {
+                                    view.setUint8(offset + i, string.charCodeAt(i));
+                                }
+                            }
+
+                            function encodeWAV(samples) {
+                                var buffer = new ArrayBuffer(44 + samples.length * 2);
+                                var view = new DataView(buffer);
+
+                                /* RIFF identifier */
+                                writeString(view, 0, 'RIFF');
+                                /* RIFF chunk length */
+                                view.setUint32(4, 36 + samples.length * 2, true);
+                                /* RIFF type */
+                                writeString(view, 8, 'WAVE');
+                                /* format chunk identifier */
+                                writeString(view, 12, 'fmt ');
+                                /* format chunk length */
+                                view.setUint32(16, 16, true);
+                                /* sample format (raw) */
+                                view.setUint16(20, 1, true);
+                                /* channel count */
+                                view.setUint16(22, numChannels, true);
+                                /* sample rate */
+                                view.setUint32(24, sampleRate, true);
+                                /* byte rate (sample rate * block align) */
+                                view.setUint32(28, sampleRate * 4, true);
+                                /* block align (channel count * bytes per sample) */
+                                view.setUint16(32, numChannels * 2, true);
+                                /* bits per sample */
+                                view.setUint16(34, 16, true);
+                                /* data chunk identifier */
+                                writeString(view, 36, 'data');
+                                /* data chunk length */
+                                view.setUint32(40, samples.length * 2, true);
+
+                                floatTo16BitPCM(view, 44, samples);
+
+                                return view;
+                            }
+                        }, self);
+
+                        this.worker.postMessage({
+                            command: 'init',
+                            config: {
+                                sampleRate: this.context.sampleRate,
+                                numChannels: this.config.numChannels
+                            }
+                        });
+
+                        this.worker.onmessage = function (e) {
+                            var cb = _this.callbacks[e.data.command].pop();
+                            if (typeof cb == 'function') {
+                                cb(e.data.data);
+                            }
+                        };
+                    }
+
+                    _createClass(Recorder, [{
+                            key: 'record',
+                            value: function record() {
+                                this.recording = true;
+                            }
+                        }, {
+                            key: 'stop',
+                            value: function stop() {
+                                this.recording = false;
+                            }
+                        }, {
+                            key: 'clear',
+                            value: function clear() {
+                                this.worker.postMessage({
+                                    command: 'clear'
+                                });
+                            }
+                        }, {
+                            key: 'getBuffer',
+                            value: function getBuffer(cb) {
+                                cb = cb || this.config.callback;
+                                if (!cb)
+                                    throw new Error('Callback not set');
+
+                                this.callbacks.getBuffer.push(cb);
+
+                                this.worker.postMessage({
+                                    command: 'getBuffer'
+                                });
+                            }
+                        }, {
+                            key: 'exportWAV',
+                            value: function exportWAV(cb, mimeType) {
+                                mimeType = mimeType || this.config.mimeType;
+                                cb = cb || this.config.callback;
+                                if (!cb)
+                                    throw new Error('Callback not set');
+
+                                this.callbacks.exportWAV.push(cb);
+
+                                this.worker.postMessage({
+                                    command: 'exportWAV',
+                                    type: mimeType
+                                });
+                            }
+                        }], [{
+                            key: 'forceDownload',
+                            value: function forceDownload(blob, filename) {
+                                var url = (window.URL || window.webkitURL).createObjectURL(blob);
+                                var link = window.document.createElement('a');
+                                link.href = url;
+                                link.download = filename || 'output.wav';
+                                var click = document.createEvent("Event");
+                                click.initEvent("click", true, true);
+                                link.dispatchEvent(click);
+                            }
+                        }]);
+
+                    return Recorder;
+                })();
+
+                exports.default = Recorder;
+
+            }, {
+                "inline-worker": 3
+            }],
+        3: [function (require, module, exports) {
+                "use strict";
+
+                module.exports = require("./inline-worker");
+            }, {
+                "./inline-worker": 4
+            }],
+        4: [function (require, module, exports) {
+                (function (global) {
+                    "use strict";
+
+                    var _createClass = (function () {
+                        function defineProperties(target, props) {
+                            for (var key in props) {
+                                var prop = props[key];
+                                prop.configurable = true;
+                                if (prop.value)
+                                    prop.writable = true;
+                            }
+                            Object.defineProperties(target, props);
+                        }
+                        return function (Constructor, protoProps, staticProps) {
+                            if (protoProps)
+                                defineProperties(Constructor.prototype, protoProps);
+                            if (staticProps)
+                                defineProperties(Constructor, staticProps);
+                            return Constructor;
+                        };
+                    })();
+
+                    var _classCallCheck = function (instance, Constructor) {
+                        if (!(instance instanceof Constructor)) {
+                            throw new TypeError("Cannot call a class as a function");
+                        }
+                    };
+
+                    var WORKER_ENABLED = !!(global === global.window && global.URL && global.Blob && global.Worker);
+
+                    var InlineWorker = (function () {
+                        function InlineWorker(func, self) {
+                            var _this = this;
+
+                            _classCallCheck(this, InlineWorker);
+
+                            if (WORKER_ENABLED) {
+                                var functionBody = func.toString().trim().match(/^function\s*\w*\s*\([\w\s,]*\)\s*{([\w\W]*?)}$/)[1];
+                                var url = global.URL.createObjectURL(new global.Blob([functionBody], {
+                                    type: "text/javascript"
+                                }));
+
+                                return new global.Worker(url);
+                            }
+
+                            this.self = self;
+                            this.self.postMessage = function (data) {
+                                setTimeout(function () {
+                                    _this.onmessage({
+                                        data: data
+                                    });
+                                }, 0);
+                            };
+
+                            setTimeout(function () {
+                                func.call(self);
+                            }, 0);
+                        }
+
+                        _createClass(InlineWorker, {
+                            postMessage: {
+                                value: function postMessage(data) {
+                                    var _this = this;
+
+                                    setTimeout(function () {
+                                        _this.self.onmessage({
+                                            data: data
+                                        });
+                                    }, 0);
+                                }
+                            }
+                        });
+
+                        return InlineWorker;
+                    })();
+
+                    module.exports = InlineWorker;
+                }).call(this, typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+            }, {}]
+    }, {}, [1])(1)
+});
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Montserrat">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<style>
+body,h1,h2,h3,h4,h5,h6 {font-family: "Montserrat", sans-serif;}
+body, html {
+  height: 100%;
+letter-spacing:5px;
+  color: #ED786C;
+  line-height: 1.8;
+	background-color: black;
+}
+.w3-hover-opacity 
+	{
+	cursor: pointer;
+		color:red;
+	}
+#navDemo
+	{
+		color:#ED786C;
+	}
+</style>
+<body>
+<!-- Navbar (sit on top) -->
+<div class="w3-top">  
+	<div class="w3-bar" id="myNavbar">
+    <a class="w3-bar-item w3-button w3-hover-black w3-hide-medium w3-hide-large w3-right" href="javascript:void(0);" onclick="toggleFunction()" title="Toggle Navigation Menu">
+      <i class="fa fa-bars"></i>
+    </a>
+    <a href="#" class="w3-bar-item w3-button">HOME</a>
+    <a href="{{ url_for('dets') }}" class="w3-bar-item w3-button w3-hide-small">DETAILS</a>
+  </div>
+
+  <!-- Navbar on small screens -->
+  <div id="navDemo" class="w3-bar-block w3-black w3-hide w3-hide-large w3-hide-medium">
+    <a href="{{ url_for('home') }}" class="w3-bar-item w3-button" onclick="toggleFunction()"><font color="#ED786C">DETAILS</font></a>
+    </div>
+</div>
+
+<!-- First Parallax Image with Logo Text -->
+<div class="bgimg-1 w3-display-container w3-opacity-min" id="home">
+  <div class="w3-display-middle" style="white-space:nowrap;position: relative;top:300px;">
+    <center>
+<!--		<img src="Layer 1.png" height="140px"width="110px" style="position: relative; top:174px;right:2px;">-->
+<div class="recorder_wrapper">
+<div class="recorder">
+ <div data-role="controls" style="background-color: black;" class="recorder_wrapper">
+    <button><img src="static\Layer 1.png" height="120px;"></button>
+    </div>
+	<p id="msg_box">{{p}}</p>
+    <br>
+    <p><a href="{{ url_for('home') }}" style="text-decoration: none;">click for output</a></p>
+<div data-role="recordings"></div>
+		</div>
+        
+		</div>
+	</center>
+  </div>
+ 
+ 
+  
+</div>
+<script>
+
+// Change style of navbar on scroll
+window.onscroll = function() {myFunction()};
+function myFunction() {
+    var navbar = document.getElementById("myNavbar");
+    if (document.body.scrollTop > 100 || document.documentElement.scrollTop > 100) {
+        navbar.className = "w3-bar" + " w3-card" + " w3-animate-top" + " w3-black";
+    } else {
+        navbar.className = navbar.className.replace(" w3-card w3-animate-top w3-black", "");
+    }
+}
+
+// Used to toggle the menu on small screens when clicking on the menu button
+function toggleFunction() {
+    var x = document.getElementById("navDemo");
+    if (x.className.indexOf("w3-show") == -1) {
+        x.className += " w3-show";
+    } else {
+        x.className = x.className.replace(" w3-show", "");
+    }
+}
+</script>
+<script>
+  var msg_box = document.getElementById("msg_box"),
+  button = document.getElementById("button"),
+  canvas = document.getElementById("canvas"),
+  lang = {
+    mic_error: "Error accessing the microphone", 
+    press_to_start: "Press to start recording",
+    recording: "Recording", 
+    play: "Play", 
+    stop: "Stop", 
+    download: "Download", 
+    use_https:
+      "This application in not working over insecure connection. Try to use HTTPS"
+  },
+  time;
+
+msg_box.innerHTML = lang.press_to_start;
+
+if (navigator.mediaDevices === undefined) {
+  navigator.mediaDevices = {};
+}
+
+if (navigator.mediaDevices.getUserMedia === undefined) {
+  navigator.mediaDevices.getUserMedia = function (constrains) {
+    var getUserMedia =
+      navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+    if (!getUserMedia) {
+      return Promise.reject(
+        new Error("getUserMedia is not implemented in this browser")
+      );
+    }
+
+    return new Promise(function (resolve, reject) {
+      getUserMedia.call(navigator, constrains, resolve, reject);
+    });
+  };
+}
+
+if (navigator.mediaDevices.getUserMedia) {
+  var btn_status = "inactive",
+    mediaRecorder,
+    chunks = [],
+    audio = new Audio(),
+    mediaStream,
+    audioSrc,
+    type = {
+      type: "audio/wav"
+    },
+    ctx,
+    analys,
+    blob;
+
+  button.onclick = function () {
+    if (btn_status == "inactive") {
+      start();
+    } else if (btn_status == "recording") {
+      stop();
+    }
+  };
+
+  function parseTime(sec) {
+    var h = parseInt(sec / 3600);
+    var m = parseInt(sec / 60);
+    var sec = sec - (h * 3600 + m * 60);
+
+    h = h == 0 ? "" : h + ":";
+    sec = sec < 10 ? "0" + sec : sec;
+
+    return h + m + ":" + sec;
+  }
+
+  function start() {
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then(function (stream) {
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.start();
+
+        button.classList.add("recording");
+        btn_status = "recording";
+
+        msg_box.innerHTML = lang.recording;
+
+        if (navigator.vibrate) navigator.vibrate(150);
+
+        time = Math.ceil(new Date().getTime() / 1000);
+
+        mediaRecorder.ondataavailable = function (event) {
+          chunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = function () {
+          stream.getTracks().forEach(function (track) {
+            track.stop();
+          });
+
+          blob = new Blob(chunks, type);
+          audioSrc = window.URL.createObjectURL(blob);
+
+          audio.src = audioSrc;
+
+          chunks = [];
+        };
+      })
+      .catch(function (error) {
+        if (location.protocol != "https:") {
+          msg_box.innerHTML = lang.mic_error + "<br>" + lang.use_https;
+        } else {
+          msg_box.innerHTML = lang.mic_error;
+        }
+        button.disabled = true;
+      });
+  }
+
+  function stop() {
+    mediaRecorder.stop();
+    button.classList.remove("recording");
+    btn_status = "inactive";
+
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+
+    var now = Math.ceil(new Date().getTime() / 1000);
+
+    var t = parseTime(now - time);
+
+    msg_box.innerHTML =
+      '<a href="#" onclick="play(); return false;" class="txt_btn">' +
+      lang.play +
+      " (" +
+      t +
+      "s)</a><br>" +
+      '<a href="#" onclick="save(); return false;" class="txt_btn">' +
+      lang.download +
+      "</a>";
+  }
+
+  function play() {
+    audio.play();
+    msg_box.innerHTML =
+      '<a href="#" onclick="pause(); return false;" class="txt_btn">' +
+      lang.stop +
+      "</a><br>" +
+      '<a href="#" onclick="save(); return false;" class="txt_btn">' +
+      lang.download +
+      "</a>";
+  }
+
+  function pause() {
+    audio.pause();
+    audio.currentTime = 0;
+    msg_box.innerHTML =
+      '<a href="#" onclick="play(); return false;" class="txt_btn">' +
+      lang.play +
+      "</a><br>" +
+      '<a href="#" onclick="save(); return false;" class="txt_btn">' +
+      lang.download +
+      "</a>";
+  }
+
+  function roundedRect(ctx, x, y, width, height, radius, fill) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + radius);
+    ctx.lineTo(x, y + height - radius);
+    ctx.quadraticCurveTo(x, y + height, x + radius, y + height);
+    ctx.lineTo(x + width - radius, y + height);
+    ctx.quadraticCurveTo(x + width, y + height, x + width, y + height - radius);
+    ctx.lineTo(x + width, y + radius);
+    ctx.quadraticCurveTo(x + width, y, x + width - radius, y);
+    ctx.lineTo(x + radius, y);
+    ctx.quadraticCurveTo(x, y, x, y + radius);
+
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  function save() {
+    var a = document.createElement("a");
+    a.download = "record.wav";
+    a.href = audioSrc;
+    document.body.appendChild(a);
+    a.click();
+
+    document.body.removeChild(a);
+  }
+} else {
+  if (location.protocol != "https:") {
+    msg_box.innerHTML = lang.mic_error + "<br>" + lang.use_https;
+  } else {
+    msg_box.innerHTML = lang.mic_error;
+  }
+  button.disabled = true;
+}
+
+</script>
+	<script>
+            jQuery(document).ready(function () {
+                var $ = jQuery;
+                var myRecorder = {
+                    objects: {
+                        context: null,
+                        stream: null,
+                        recorder: null
+                    },
+                    init: function () {
+                        if (null === myRecorder.objects.context) {
+                            myRecorder.objects.context = new (
+                                    window.AudioContext || window.webkitAudioContext
+                                    );
+                        }
+                    },
+                    start: function () {
+                        var options = {audio: true, video: false};
+                        navigator.mediaDevices.getUserMedia(options).then(function (stream) {
+                            myRecorder.objects.stream = stream;
+                            myRecorder.objects.recorder = new Recorder(
+                                    myRecorder.objects.context.createMediaStreamSource(stream),
+                                    {numChannels: 1}
+                            );
+                            myRecorder.objects.recorder.record();
+                        }).catch(function (err) {});
+                    },
+                    stop: function (listObject) {
+                        if (null !== myRecorder.objects.stream) {
+                            myRecorder.objects.stream.getAudioTracks()[0].stop();
+                        }
+                        if (null !== myRecorder.objects.recorder) {
+                            myRecorder.objects.recorder.stop();
+
+                            // Validate object
+                            if (null !== listObject
+                                    && 'object' === typeof listObject
+                                    && listObject.length > 0) {
+                                // Export the WAV file
+                                myRecorder.objects.recorder.exportWAV(function (blob) {
+                                    var url = (window.URL || window.webkitURL)
+                                            .createObjectURL(blob);
+
+                                    // Prepare the playback
+                                    var audioObject = $('<audio controls></audio>')
+                                            .attr('src', url);
+
+                                    // Prepare the download link
+                                    var downloadObject = $('<a>&#9660;</a>')
+                                            .attr('href', url)
+                                            .attr('download', 'record.wav');
+
+                                    // Wrap everything in a row
+                                    var holderObject = $('<div class="row"></div>')
+                                            .append(audioObject)
+                                            .append(downloadObject);
+
+                                    // Append to the list
+                                    listObject.append(holderObject);
+                                });
+                            }
+                        }
+                    }
+                };
+
+                // Prepare the recordings list
+                var listObject = $('[data-role="recordings"]');
+
+                // Prepare the record button
+                $('[data-role="controls"] > button').click(function () {
+                    // Initialize the recorder
+                    myRecorder.init();
+
+                    // Get the button state 
+                    var buttonState = !!$(this).attr('data-recording');
+
+                    // Toggle
+                    if (!buttonState) {
+                        $(this).attr('data-recording', 'true');
+                        myRecorder.start();
+                    } else {
+                        $(this).attr('data-recording', '');
+                        myRecorder.stop(listObject);
+                    }
+                });
+            });
+        </script>
+</body>
+</html>
