@@ -116,4 +116,3 @@ model = CTScanModel()
 # Train the model on each client
 for client in clients:
     client.train(model)
->>>>>>> ab52586 (Initial commit)
