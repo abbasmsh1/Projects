@@ -119,7 +119,7 @@ class CTScanModel(nn.Module):
         return x
 
 # Load the dataset and create data loaders
-root_dir = "InfoSec/Data/test"
+root_dir = "InfoSec/Data/train"
 transform = transforms.Compose([
     transforms.Resize((64, 64)),
     transforms.ToTensor(),
