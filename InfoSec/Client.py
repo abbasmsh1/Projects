@@ -71,10 +71,32 @@ class FederatedClient:
             print(f"Epoch {epoch+1}, Loss: {running_loss / len(self.data_loader)}, Accuracy: {(100 * correct / total):.2f}%")
 
         # Get trained model's parameters and send them to the server
-        self.worker.send_model(model.state_dict())
+        def send_encrypted_weights(weights):
+          """Sends weights to the server encrypted using Secure Multi-Party Computation (SMPC)"""
+          # Encrypt weights using SMPC (assuming GPU availability)
+          encrypted_weights = weights.send(server, encrypt=True)  # Requires GPU
+        
+          # Serialize the encrypted weights
+          serialized_weights = encrypted_weights.serialize(as_bytes=True)
+        
+          # Create a socket connection
+          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          sock.connect((SERVER_IP, PORT))
+        
+          # Send the serialized encrypted weights to the server
+          sock.sendall(serialized_weights)
+        
+          # Receive aggregated weights from the server (already encrypted)
+          received_data = sock.recv(1024)  # Adjust buffer size as needed
+          aggregated_weights = sy.deserialize(hook, received_data)
+        
+          # Close the socket
+          sock.close()
+        
+          return aggregated_weights
 
         # Receive updated weights from the server
-        updated_weights = self.worker.get_updated_weights()
+        updated_weights = self.send_encrypted_weights(model.state_dict())
 
         # Load the updated weights into the local model
         model.load_state_dict(updated_weights)
